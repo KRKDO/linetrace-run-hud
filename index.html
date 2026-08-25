@@ -1,0 +1,1555 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>マイコンカー 走行データ HUD ジェネレーター</title>
+<style>
+  :root{
+    --bg:#12130f;
+    --panel:#1a1a19;
+    --line:#33332f;
+    --ink:#ffffff;
+    --ink2:#c3c2b7;
+    --ink3:#8b8a80;
+    --accent:#3987e5;
+    --speed:#3987e5;
+    --angle:#d95926;
+    --duty:#199e70;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg);color:var(--ink);
+    font-family:"Inter","Noto Sans JP","Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif;
+    font-size:13px;display:flex;flex-direction:column;overflow:hidden;
+  }
+  header{
+    display:flex;align-items:center;gap:14px;padding:10px 16px;
+    border-bottom:1px solid var(--line);flex:0 0 auto;
+  }
+  header h1{font-size:14px;margin:0;font-weight:650;letter-spacing:.02em}
+  header .sub{color:var(--ink3);font-size:12px}
+  header .spacer{flex:1}
+  main{flex:1;display:flex;min-height:0}
+  #side{
+    width:290px;flex:0 0 290px;border-right:1px solid var(--line);
+    overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:16px;
+  }
+  #stagewrap{flex:1;display:flex;flex-direction:column;min-width:0;padding:14px;gap:10px}
+  #stage{
+    flex:1;min-height:0;display:flex;align-items:center;justify-content:center;
+    border:1px solid var(--line);border-radius:10px;overflow:hidden;position:relative;
+  }
+  #stage.checker{
+    background-color:#2a2a28;
+    background-image:
+      linear-gradient(45deg,#3a3a37 25%,transparent 25%,transparent 75%,#3a3a37 75%),
+      linear-gradient(45deg,#3a3a37 25%,transparent 25%,transparent 75%,#3a3a37 75%);
+    background-size:24px 24px;background-position:0 0,12px 12px;
+  }
+  #stage.dark{background:#0b0b0a}
+  #cv{max-width:100%;max-height:100%;display:block}
+  .group{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#16171400}
+  .group h3{margin:0 0 8px;font-size:12px;color:var(--ink2);font-weight:600;letter-spacing:.04em}
+  label.row{display:flex;align-items:center;gap:8px;padding:3px 0;color:var(--ink2);cursor:pointer}
+  label.row input{accent-color:var(--accent);cursor:pointer}
+  .field{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0;color:var(--ink2)}
+  select,input[type=number]{
+    background:#232320;color:var(--ink);border:1px solid var(--line);border-radius:6px;
+    padding:4px 6px;font:inherit;min-width:96px;
+  }
+  input[type=range]{accent-color:var(--accent);width:110px}
+  button{
+    background:#232320;color:var(--ink);border:1px solid var(--line);border-radius:7px;
+    padding:7px 12px;font:inherit;cursor:pointer;
+  }
+  button:hover:not(:disabled){background:#2e2e2a;border-color:#4a4a44}
+  button:disabled{opacity:.4;cursor:default}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.primary:hover:not(:disabled){background:#4b93e9}
+  .btnrow{display:flex;gap:8px;flex-wrap:wrap}
+  #transport{display:flex;align-items:center;gap:12px;flex:0 0 auto}
+  #seek{flex:1;accent-color:var(--accent);width:auto}
+  #tlabel{font-variant-numeric:tabular-nums;color:var(--ink2);min-width:330px;text-align:right;font-size:12px;white-space:nowrap}
+  #drop{
+    position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:10px;background:rgba(10,11,9,.86);color:var(--ink2);text-align:center;padding:24px;
+  }
+  #drop b{color:var(--ink);font-size:15px}
+  #drop small{color:var(--ink3);line-height:1.7}
+  body.dragging #drop{outline:2px dashed var(--accent);outline-offset:-14px;background:rgba(10,11,9,.94)}
+  #prog{display:none;flex-direction:column;gap:6px}
+  #progbar{height:6px;background:#232320;border-radius:3px;overflow:hidden}
+  #progbar i{display:block;height:100%;width:0;background:var(--accent)}
+  .hint{color:var(--ink3);font-size:11px;line-height:1.6;margin-top:6px}
+  .hint b{color:var(--ink2)}
+  #ffcmd{
+    background:#0e0f0c;border:1px solid var(--line);border-radius:8px;padding:10px;
+    font-size:10.5px;line-height:1.6;color:var(--ink2);white-space:pre-wrap;
+    word-break:break-all;margin:8px 0 0;max-height:260px;overflow:auto;user-select:all;
+  }
+  .badge{font-size:11px;color:var(--ink3);border:1px solid var(--line);border-radius:5px;padding:2px 6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>マイコンカー 走行データ HUD</h1>
+  <span class="sub" id="fileinfo">CSV未読み込み</span>
+  <span class="spacer"></span>
+  <span class="badge">時間列の単位: ms</span>
+  <button id="openbtn">CSVを開く</button>
+  <input type="file" id="file" accept=".csv,.CSV,.txt" hidden>
+</header>
+
+<main>
+  <div id="side">
+    <div class="group">
+      <h3>出力</h3>
+      <div class="field"><span>解像度</span>
+        <select id="res">
+          <option value="1920">1920 × 1080</option>
+          <option value="1280">1280 × 720</option>
+          <option value="2560">2560 × 1440</option>
+        </select>
+      </div>
+      <div class="field"><span>HUDの配置</span>
+        <select id="hudside">
+          <option value="left">左に1列</option>
+          <option value="right">右に1列</option>
+        </select>
+      </div>
+      <div class="field"><span>背景</span>
+        <select id="bg">
+          <option value="alpha">透過（アルファ）</option>
+          <option value="green">グリーンバック</option>
+          <option value="blue">ブルーバック</option>
+          <option value="black">黒</option>
+        </select>
+      </div>
+      <div class="field"><span>パネル濃さ</span><input type="range" id="opacity" min="0" max="100" value="72"></div>
+      <label class="row"><input type="checkbox" id="panelbg" checked>パネル背景を描く</label>
+      <p class="hint">グリーン／ブルー／黒背景ではパネルを不透明で描画します（キー抜き後に背景色が滲まないため）。「パネル濃さ」は透過モードでのみ効きます。</p>
+    </div>
+
+    <div class="group">
+      <h3>表示ウィジェット</h3>
+      <label class="row"><input type="checkbox" id="w_motor" checked>モーター4輪デューティ</label>
+      <label class="row"><input type="checkbox" id="w_servo" checked>サーボ角度</label>
+      <label class="row"><input type="checkbox" id="w_speed" checked>速度メーター</label>
+      <label class="row"><input type="checkbox" id="w_graph" checked>時系列グラフ</label>
+      <label class="row"><input type="checkbox" id="w_sensor" checked>ラインセンサ・坂・パターン</label>
+      <label class="row"><input type="checkbox" id="w_time" checked>経過時間</label>
+      <label class="row"><input type="checkbox" id="w_meta">走行設定値（CSV冒頭）</label>
+    </div>
+
+    <div class="group">
+      <h3>スケール</h3>
+      <div class="field"><span>速度 最大</span><input type="number" id="maxspeed" min="1" step="5" value="60"></div>
+      <div class="field"><span>角度 最大±</span><input type="number" id="maxangle" min="1" step="5" value="50"></div>
+      <div class="field"><span>デューティ 最大±</span><input type="number" id="maxduty" min="1" step="10" value="110"></div>
+      <div class="field"><span>グラフ窓 (秒)</span><input type="number" id="win" min="0" max="60" step="1" value="5"></div>
+      <div class="field"><span>電磁ロック値</span><input type="number" id="lock" step="1" value="111"></div>
+      <label class="row"><input type="checkbox" id="lockhold" checked>短い電磁ロックを取りこぼさない</label>
+      <button id="autoscale">データから自動設定</button>
+      <p class="hint">グラフ窓に 0 を入れると全区間表示（プレイヘッドが走る）になります。<br>
+      デューティが「電磁ロック値」(既定111) のときは、−20相当の長さ・黄色・斜線・「ロック」表示に切り替わります。<br>
+      ロックは10ms程度しか続かないことがあるため、既定では1コマ分の区間内にロックがあれば表示します（チェックを外すとその瞬間のCSV値のみで判定）。</p>
+    </div>
+
+    <div class="group">
+      <h3>走行動画</h3>
+      <div class="btnrow">
+        <button id="vopen">動画を開く</button>
+        <button id="vclear" disabled>外す</button>
+      </div>
+      <input type="file" id="vfile" accept="video/*" hidden>
+      <p class="hint" id="vinfo">動画未読み込み（この枠にドロップしてもOK）</p>
+      <div class="field"><span>動画のfps</span><input type="number" id="vfps" min="1" step="0.001" value="30"></div>
+      <div class="field"><span>開始フレーム</span><input type="number" id="vframe" step="1" value="0"></div>
+      <div class="btnrow" style="margin-bottom:4px">
+        <button id="vm10">−10</button><button id="vm1">−1</button>
+        <button id="vp1">+1</button><button id="vp10">+10</button>
+      </div>
+      <div class="field"><span>収め方</span>
+        <select id="vfit">
+          <option value="contain">全体を表示（内接）</option>
+          <option value="cover">枠いっぱい（はみ出しは切る）</option>
+        </select>
+      </div>
+      <label class="row"><input type="checkbox" id="vaudio" checked>音声も再生・収録する</label>
+      <p class="hint">fpsは動画から自動判定します（MP4はファイル内の情報から、それ以外は実測）。違っていれば手入力で上書きできます。<br>
+      データの0秒に重なる動画のフレーム番号を「開始フレーム」に入れます。タイムを0にして±ボタンで合わせるのが簡単です。</p>
+    </div>
+
+    <div class="group">
+      <h3>書き出し</h3>
+      <div class="field"><span>フレームレート</span>
+        <select id="fps"><option value="24">24</option><option value="30" selected>30</option><option value="60">60</option></select>
+      </div>
+      <div class="field"><span>ビットレート</span><input type="number" id="mbps" min="1" max="80" step="1" value="16"></div>
+      <div class="field"><span>形式</span>
+        <select id="fmt">
+          <option value="mp4x" selected>MP4（フレーム精度・推奨）</option>
+          <option value="png">PNG連番 ZIP（透過・フレーム精度）</option>
+          <option value="mp4">MP4（等倍録画・音声入り）</option>
+          <option value="webm">WebM（等倍録画）</option>
+        </select>
+      </div>
+      <div class="btnrow">
+        <button id="run" class="primary">書き出し</button>
+        <button id="shot">現在フレームをPNG</button>
+        <button id="cancel" disabled>中止</button>
+      </div>
+      <div id="prog"><div id="progbar"><i></i></div><small id="progtext" style="color:var(--ink3)"></small></div>
+      <p class="hint" id="fmthint"></p>
+      <button id="ffbtn" style="margin-top:4px">ffmpegコマンドを表示</button>
+      <pre id="ffcmd" hidden></pre>
+    </div>
+  </div>
+
+  <div id="stagewrap">
+    <div id="stage" class="checker">
+      <canvas id="cv" width="1920" height="1080"></canvas>
+      <div id="drop">
+        <b>走行データCSVをここにドロップ</b>
+        <small>
+          1行目〜数行の設定値と、<code>時間,パターン,角度,左前,右前,左後,右後,速度,左端,左中,中央,右中,右端,坂</code><br>
+          というヘッダを持つCSVに対応します（列名で自動認識 / UTF-8・Shift_JIS自動判定）。<br>
+          走行動画（MP4など）もドロップすれば、空いたスペースに並べて合成できます。
+        </small>
+      </div>
+    </div>
+    <div id="transport">
+      <button id="play" disabled>▶ 再生</button>
+      <button id="rew" disabled>⏮</button>
+      <button id="stepb" disabled title="1コマ戻る（←キー / Shift+←で10コマ）">◀ コマ</button>
+      <button id="stepf" disabled title="1コマ進む（→キー / Shift+→で10コマ）">コマ ▶</button>
+      <input type="range" id="seek" min="0" max="1000" value="0" disabled>
+      <select id="rate">
+        <option value="0.25">0.25×</option>
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+      </select>
+      <label class="row"><input type="checkbox" id="loop" checked>ループ</label>
+      <span id="tlabel">0.000 s / 0.000 s</span>
+    </div>
+  </div>
+</main>
+
+<script>
+"use strict";
+/* ============================================================
+   マイコンカー走行データ → HUD 動画素材ジェネレーター
+   ・CSV: 先頭に設定値行、その後 "時間," から始まるヘッダ + データ
+   ・時間列の単位は ms
+   ============================================================ */
+
+const DW = 1920, DH = 1080;               // デザイン基準解像度
+const $ = id => document.getElementById(id);
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+const COLS = {
+  t:'時間', pattern:'パターン', angle:'角度',
+  lf:'左前', rf:'右前', lr:'左後', rr:'右後',
+  speed:'速度',
+  s0:'左端', s1:'左中', s2:'中央', s3:'右中', s4:'右端',
+  slope:'坂'
+};
+const C = {
+  speed:'#3987e5', angle:'#d95926', duty:'#199e70', neg:'#d95926',
+  lock:'#fab219',                                   // 電磁ロック（状態色）
+  slope:'#c3c2b7',
+  ink:'#ffffff', ink2:'#c3c2b7', ink3:'#8b8a80'
+};
+
+let D = null;      // {name, meta:[{label,value}], t:Float64Array, col:{key:Float64Array}, dur}
+let cur = 0;       // 現在時刻 (ms)
+let playing = false, lastRAF = 0, aborting = false, busy = false;
+
+/* ---------------- CSV 読み込み ---------------- */
+function decodeBytes(buf){
+  const u8 = new Uint8Array(buf);
+  let txt = new TextDecoder('utf-8', {fatal:false}).decode(u8);
+  if (txt.indexOf('�') >= 0) {            // 化けたら Shift_JIS で読み直す
+    try { txt = new TextDecoder('shift_jis').decode(u8); } catch(e){}
+  }
+  return txt.replace(/^﻿/, '');
+}
+
+function parseCSV(text, name){
+  const lines = text.split(/\r\n|\n|\r/).filter(l => l.trim() !== '');
+  let hi = -1;
+  for (let i = 0; i < lines.length; i++){
+    const f = lines[i].split(',').map(s => s.trim());
+    if (f.length >= 3 && (f[0] === COLS.t || f[0] === 'time' || f[0] === 'Time')) { hi = i; break; }
+  }
+  if (hi < 0) throw new Error('ヘッダ行（先頭が「時間」の行）が見つかりません。');
+
+  // 冒頭の設定値行:  "距離 STOP_DISTANCE68000" → ラベル=距離 / 値=末尾の数値
+  const meta = [];
+  for (let i = 0; i < hi; i++){
+    const raw = lines[i].replace(/,+$/,'').trim();
+    if (!raw) continue;
+    const label = raw.split(/[\s,]+/)[0];
+    const m = raw.match(/(-?\d+(?:\.\d+)?)\s*$/);
+    meta.push({ label, value: m ? m[1] : raw.slice(label.length).trim() });
+  }
+
+  const head = lines[hi].split(',').map(s => s.trim());
+  const idx = {};
+  for (const k in COLS){
+    let j = head.indexOf(COLS[k]);
+    idx[k] = j;
+  }
+  if (idx.t < 0) idx.t = 0;
+
+  const body = lines.slice(hi + 1);
+  const n = body.length;
+  const t = new Float64Array(n);
+  const col = {};
+  for (const k in COLS) if (k !== 't') col[k] = new Float64Array(n);
+
+  let m = 0;
+  for (let i = 0; i < n; i++){
+    const f = body[i].split(',');
+    if (f.length < 2) continue;
+    const tv = parseFloat(f[idx.t]);
+    if (!isFinite(tv)) continue;
+    t[m] = tv;
+    for (const k in col){
+      const j = idx[k];
+      const v = (j >= 0 && j < f.length) ? parseFloat(f[j]) : NaN;
+      col[k][m] = isFinite(v) ? v : 0;
+    }
+    m++;
+  }
+  if (m < 2) throw new Error('有効なデータ行が足りません。');
+
+  const t2 = t.slice(0, m);
+  const t0 = t2[0];
+  for (let i = 0; i < m; i++) t2[i] -= t0;          // 0 始まりに正規化
+  const col2 = {};
+  for (const k in col) col2[k] = col[k].slice(0, m);
+
+  return { name, meta, t: t2, col: col2, n: m, dur: t2[m - 1], has: idx };
+}
+
+/* 時刻 t(ms) の値（線形補間 / パターンは近傍値） */
+function findIdx(t){
+  const a = D.t; let lo = 0, hi = D.n - 1;
+  if (t <= a[0]) return 0;
+  if (t >= a[hi]) return hi - 1;
+  while (hi - lo > 1){ const mid = (lo + hi) >> 1; if (a[mid] <= t) lo = mid; else hi = mid; }
+  return lo;
+}
+// 既定は「その時刻に有効なCSVの値」をそのまま返す（前後サンプルの補間＝平均はしない）。
+// lerp=true を渡したときだけ線形補間する。
+function val(key, t, lerp){
+  const i = findIdx(t), a = D.t, c = D.col[key];
+  if (t >= a[D.n - 1]) return c[D.n - 1];
+  if (!lerp) return c[i];                     // 直前のサンプル値を保持
+  const d = a[i + 1] - a[i];
+  const f = d > 0 ? (t - a[i]) / d : 0;
+  return c[i] + (c[i + 1] - c[i]) * f;
+}
+function colMinMax(key){
+  const c = D.col[key]; let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < D.n; i++){ if (c[i] < mn) mn = c[i]; if (c[i] > mx) mx = c[i]; }
+  return [mn, mx];
+}
+
+/* ---------------- 描画ヘルパ ---------------- */
+function rr(x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function panel(x, y, w, h, title){
+  if (UI.panelbg){
+    ctx.save();
+    // 単色背景（クロマキー用）のときはパネルを不透明にして背景色が透けないようにする
+    ctx.fillStyle = (UI.bg === 'alpha') ? 'rgba(12,13,11,0.78)' : '#0c0d0b';
+    rr(x, y, w, h, 18); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.restore();
+  }
+  if (title){
+    ctx.save();
+    ctx.font = '600 20px system-ui, "Noto Sans JP", sans-serif';
+    ctx.fillStyle = C.ink3; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText(title, x + 24, y + 34);
+    ctx.restore();
+  }
+}
+function shadowOn(){ ctx.shadowColor = 'rgba(0,0,0,0.75)'; ctx.shadowBlur = 6; }
+function shadowOff(){ ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; }
+function text(str, x, y, size, color, align, weight){
+  ctx.font = (weight || 500) + ' ' + size + 'px system-ui, "Noto Sans JP", sans-serif';
+  ctx.fillStyle = color; ctx.textAlign = align || 'left'; ctx.textBaseline = 'alphabetic';
+  if (!UI.panelbg) shadowOn();
+  ctx.fillText(str, x, y);
+  shadowOff();
+}
+function num(str, x, y, size, color, align, weight){
+  ctx.font = (weight || 700) + ' ' + size + 'px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+  ctx.fillStyle = color; ctx.textAlign = align || 'left'; ctx.textBaseline = 'alphabetic';
+  if (!UI.panelbg) shadowOn();
+  ctx.fillText(str, x, y);
+  shadowOff();
+}
+
+/* ---------------- レイアウト ---------------- */
+// 1列に縦積み: タイム → モーターデューティ → 速度 → サーボ角度 → ラインセンサ → 時系列
+const COLW = 580, MARGIN = 30, GAP = 12;
+const HEIGHTS = { time:68, motor:240, speed:138, servo:158, sensor:184, graph:170 };
+const ORDER = ['time','motor','speed','servo','sensor','graph'];
+
+function layout(){
+  const x = (UI.side === 'left') ? 40 : (DW - 40 - COLW);
+  const boxes = {};
+  let y = MARGIN;
+  for (const k of ORDER){
+    if (!UI.w[k]) continue;
+    boxes[k] = { x, y, w: COLW, h: HEIGHTS[k] };
+    y += HEIGHTS[k] + GAP;
+  }
+  return boxes;
+}
+
+// 数値表示は全ウィジェットで同じ書式にする（符号つき・同じ丸め）
+function fmtSigned(v){
+  const n = Math.round(v);
+  return (n > 0 ? '+' : n < 0 ? '-' : '') + Math.abs(n);
+}
+// 電磁ロック（デューティ111）判定
+const isLock = v => Math.abs(v - UI.lock) < 0.5;
+// その時刻のデューティ。値はCSVそのまま。ただし1コマ分の区間内にロックがあれば拾う
+// （ロックは10〜40msしか続かないことがあり、30fpsだとコマの隙間に落ちて写らないため）
+function dutyAt(key, t){
+  const v = val(key, t);
+  if (isLock(v)) return { v, lock:true };
+  if (UI.lockhold){
+    const half = 500 / (UI.expfps || 30);
+    const c = D.col[key];
+    const i1 = findIdx(Math.min(D.dur, t + half));
+    for (let i = findIdx(Math.max(0, t - half)); i <= i1; i++)
+      if (isLock(c[i])) return { v: UI.lock, lock:true };
+  }
+  return { v, lock:false };
+}
+// 斜線テクスチャ（色だけに頼らない二次エンコード）
+function hatch(x, y, w, h, r){
+  ctx.save();
+  ctx.beginPath(); rr(x, y, w, h, r || 4); ctx.clip();
+  ctx.strokeStyle = 'rgba(0,0,0,0.38)'; ctx.lineWidth = 4;
+  for (let i = -h; i < w + h; i += 12){
+    ctx.beginPath(); ctx.moveTo(x + i, y + h); ctx.lineTo(x + i + h, y); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* ---------------- 各ウィジェット ---------------- */
+// 経過時間
+function drawTime(b, t){
+  panel(b.x, b.y, b.w, b.h, null);
+  text('TIME', b.x + 26, b.y + 46, 20, C.ink3, 'left');
+  num((Math.max(0, t) / 1000).toFixed(3), b.x + b.w - 44, b.y + 48, 38, C.ink, 'right', 700);
+  text('s', b.x + b.w - 22, b.y + 48, 20, C.ink3, 'right');
+}
+
+// モーターデューティ（縦バー4本 / 111=電磁ロックは -20 相当を黄色で）
+function drawMotor(b, t){
+  panel(b.x, b.y, b.w, b.h, 'モーター デューティ (%)');
+  const max = UI.maxduty;
+  const barW = 62, gapB = 52, totalW = 4 * barW + 3 * gapB;
+  const x0 = b.x + (b.w - totalW) / 2;
+  const top = b.y + 58, hArea = 128, zeroY = top + hArea / 2;
+  const cells = [['左前','lf'],['右前','rf'],['左後','lr'],['右後','rr']];
+
+  // 縦軸の目盛
+  num('+' + max, x0 - 14, top + 12, 14, C.ink3, 'right', 600);
+  num('-' + max, x0 - 14, top + hArea, 14, C.ink3, 'right', 600);
+
+  cells.forEach(([label, key], i) => {
+    const x = x0 + i * (barW + gapB);
+    const d0 = dutyAt(key, t), v = d0.v, lock = d0.lock;
+    const shown = lock ? -20 : v;
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    rr(x, top, barW, hArea, 8); ctx.fill();
+    const f = Math.max(-1, Math.min(1, shown / max));
+    const hh = Math.abs(f) * (hArea / 2);
+    if (hh > 1){
+      ctx.fillStyle = lock ? C.lock : (f >= 0 ? C.duty : C.neg);
+      const by = f >= 0 ? zeroY - hh : zeroY + 1;
+      rr(x, by, barW, Math.max(2, hh - 1), 5); ctx.fill();
+      if (lock) hatch(x, by, barW, Math.max(2, hh - 1), 5);
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x - 5, zeroY); ctx.lineTo(x + barW + 5, zeroY); ctx.stroke();
+    ctx.restore();
+    text(label, x + barW / 2, b.y + 208, 17, C.ink2, 'center');
+    if (lock) text('ロック', x + barW / 2, b.y + 230, 17, C.lock, 'center', 700);
+    else num(fmtSigned(v), x + barW / 2, b.y + 230, 20, C.ink, 'center', 700);
+  });
+}
+
+// 速度
+function drawSpeed(b, t){
+  panel(b.x, b.y, b.w, b.h, '速度');
+  const v = val('speed', t), max = UI.maxspeed;
+  num(String(Math.round(v)), b.x + 150, b.y + 118, 62, C.ink, 'right', 700);
+  const bx = b.x + 178, bw = b.w - 178 - 28, by = b.y + 82, bh = 22;
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.10)'; rr(bx, by, bw, bh, 7); ctx.fill();
+  const f = Math.max(0, Math.min(1, v / max));
+  if (f > 0.004){ ctx.fillStyle = C.speed; rr(bx, by, Math.max(4, f * bw), bh, 6); ctx.fill(); }
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 2;
+  for (let i = 1; i < 4; i++){
+    const x = bx + bw * (i / 4);
+    ctx.beginPath(); ctx.moveTo(x, by); ctx.lineTo(x, by + bh); ctx.stroke();
+  }
+  ctx.restore();
+  num('0', bx, b.y + 126, 14, C.ink3, 'left', 600);
+  num(String(max), bx + bw, b.y + 126, 14, C.ink3, 'right', 600);
+}
+
+// サーボ角度（中央0の双方向バー）
+function drawServo(b, t){
+  panel(b.x, b.y, b.w, b.h, 'サーボ角度');
+  const v = val('angle', t), max = UI.maxangle;
+  num(fmtSigned(v) + '°', b.x + 172, b.y + 122, 54, C.ink, 'right', 700);
+  const bx = b.x + 190, bw = b.w - 190 - 28, by = b.y + 78, bh = 26, mid = bx + bw / 2;
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.10)'; rr(bx, by, bw, bh, 8); ctx.fill();
+  const f = Math.max(-1, Math.min(1, v / max));
+  const w = Math.abs(f) * (bw / 2);
+  if (w > 1){
+    ctx.fillStyle = C.angle;
+    if (f >= 0) rr(mid + 1, by, w - 1, bh, 6); else rr(mid - w, by, w - 1, bh, 6);
+    ctx.fill();
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(mid, by - 5); ctx.lineTo(mid, by + bh + 5); ctx.stroke();
+  ctx.restore();
+  text('左', bx, b.y + 128, 16, C.ink3, 'left');
+  num('-' + max, bx + 26, b.y + 128, 14, C.ink3, 'left', 600);
+  num('0', mid, b.y + 128, 14, C.ink3, 'center', 600);
+  num('+' + max, bx + bw - 26, b.y + 128, 14, C.ink3, 'right', 600);
+  text('右', bx + bw, b.y + 128, 16, C.ink3, 'right');
+  text(v > 1 ? '右' : (v < -1 ? '左' : '直進'), b.x + 28, b.y + 146, 17, C.ink2, 'left');
+}
+
+// ラインセンサ（値が低い=白 / 高い=黒 のグレースケール表示）+ 坂 + パターン
+function drawSensor(b, t){
+  panel(b.x, b.y, b.w, b.h, 'ラインセンサ');
+  const keys = ['s0','s1','s2','s3','s4'];
+  const labels = ['左端','左中','中央','右中','右端'];
+  const max = UI.maxsensor;
+  const pw = 72, ph = 68, gp = 10;
+  const totalW = 5 * pw + 4 * gp + 24 + pw;
+  const x0 = b.x + (b.w - totalW) / 2, py = b.y + 58;
+
+  for (let i = 0; i < 5; i++){
+    const v = val(keys[i], t);
+    const f = Math.max(0, Math.min(1, v / max));
+    const g = Math.round(255 * (1 - f));                 // 低い→白 / 高い→黒
+    const x = x0 + i * (pw + gp);
+    ctx.save();
+    ctx.fillStyle = 'rgb(' + g + ',' + g + ',' + g + ')';
+    rr(x, py, pw, ph, 8); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.restore();
+    text(labels[i], x + pw / 2, b.y + 148, 16, C.ink2, 'center');
+    num(String(Math.round(v)), x + pw / 2, b.y + 170, 16, C.ink3, 'center', 600);
+  }
+  // 坂センサ（明暗ではないので棒グラフのまま）
+  const rx = x0 + 5 * (pw + gp) + 14;
+  ctx.save();
+  ctx.globalAlpha *= 0.5;
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(rx, py - 4); ctx.lineTo(rx, py + ph + 8); ctx.stroke();
+  ctx.restore();
+  const sv = val('slope', t), sf = Math.max(0, Math.min(1, sv / max));
+  const sx = rx + 14;
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.12)'; rr(sx, py, pw, ph, 8); ctx.fill();
+  ctx.fillStyle = C.slope; rr(sx, py + ph - Math.max(3, sf * ph), pw, Math.max(3, sf * ph), 7); ctx.fill();
+  ctx.restore();
+  text('坂', sx + pw / 2, b.y + 148, 16, C.ink2, 'center');
+  num(String(Math.round(sv)), sx + pw / 2, b.y + 170, 16, C.ink3, 'center', 600);
+
+  // パターン
+  const pv = val('pattern', t);
+  const px = b.x + b.w - 196, pyy = b.y + 8;
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.10)'; rr(px, pyy, 172, 42, 12); ctx.fill();
+  ctx.restore();
+  text('パターン', px + 14, pyy + 28, 17, C.ink2, 'left');
+  num(String(Math.round(pv)), px + 158, pyy + 30, 24, C.ink, 'right', 700);
+}
+
+// 時系列（速度・角度の2段）
+function drawGraph(b, t){
+  panel(b.x, b.y, b.w, b.h, null);
+  const win = UI.win * 1000;
+  const t0 = win > 0 ? t - win * 0.8 : 0;
+  const t1 = win > 0 ? t + win * 0.2 : D.dur;
+  const px0 = b.x + 100, px1 = b.x + b.w - 20, pw = px1 - px0;
+  const rows = [
+    { key:'speed', label:'速度', color:C.speed, min:0,            max:UI.maxspeed, unit:'' },
+    { key:'angle', label:'角度', color:C.angle, min:-UI.maxangle, max:UI.maxangle, unit:'°' }
+  ];
+  const rh = 50, gap = 14, top = b.y + 24;
+  const xOf = ms => px0 + (ms - t0) / (t1 - t0) * pw;
+
+  rows.forEach((r, ri) => {
+    const ry = top + ri * (rh + gap);
+    const yOf = v => ry + rh - (Math.max(r.min, Math.min(r.max, v)) - r.min) / (r.max - r.min) * rh;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(px0, ry + rh); ctx.lineTo(px1, ry + rh); ctx.stroke();
+    if (r.min < 0){
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.setLineDash([5, 5]);
+      ctx.beginPath(); ctx.moveTo(px0, yOf(0)); ctx.lineTo(px1, yOf(0)); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+
+    // 実データ点をすべて通る折れ線で描く（間引かないので現在値の点・数値と必ず一致する）
+    const col = D.col[r.key];
+    for (const seg of [[t0, Math.min(t, t1), 1], [Math.min(t, t1), t1, 0.3]]){
+      const s0 = Math.max(0, seg[0]), s1 = Math.min(D.dur, seg[1]);
+      if (s1 <= s0) continue;
+      ctx.save();
+      ctx.globalAlpha *= seg[2];
+      ctx.strokeStyle = r.color; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.beginPath();
+      let py = yOf(val(r.key, s0));
+      ctx.moveTo(xOf(s0), py);
+      const iEnd = findIdx(s1);
+      for (let i = findIdx(s0) + 1; i <= iEnd; i++){
+        const x = xOf(D.t[i]), y = yOf(col[i]);
+        ctx.lineTo(x, py); ctx.lineTo(x, y); py = y;      // 階段状（サンプル値をそのまま保持）
+      }
+      ctx.lineTo(xOf(s1), py);
+      ctx.stroke();
+      ctx.restore();
+    }
+    text(r.label, b.x + 20, ry + 20, 16, C.ink2, 'left');
+    const cv0 = val(r.key, Math.max(0, Math.min(D.dur, t)));
+    num((r.key === 'angle' ? fmtSigned(cv0) : String(Math.round(cv0))) + r.unit, b.x + 90, ry + 44, 21, r.color, 'right', 700);
+    ctx.save();
+    ctx.fillStyle = r.color; ctx.strokeStyle = 'rgba(12,13,11,0.9)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(xOf(t), yOf(cv0), 5, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  });
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(xOf(t), top - 6); ctx.lineTo(xOf(t), top + 2 * rh + gap + 4); ctx.stroke();
+  ctx.restore();
+
+  const span = (t1 - t0) / 1000;
+  const stepS = span <= 8 ? 1 : span <= 20 ? 2 : span <= 60 ? 5 : 10;
+  const s0 = Math.ceil(t0 / 1000 / stepS) * stepS, s1 = Math.floor(t1 / 1000);
+  for (let s = s0; s <= s1; s += stepS){
+    if (s < 0) continue;
+    text(s + 's', xOf(s * 1000), b.y + b.h - 10, 14, C.ink3, 'center');
+  }
+}
+
+// 走行設定（HUD列の反対側 上部）
+function drawMeta(){
+  if (!D.meta.length) return;
+  const w = 340, x = (UI.side === 'left') ? (DW - 40 - w) : 40, y = MARGIN;
+  const h = 46 + D.meta.length * 32;
+  panel(x, y, w, h, '走行設定');
+  D.meta.forEach((m, i) => {
+    const yy = y + 68 + i * 32;
+    text(m.label, x + 24, yy, 17, C.ink2, 'left');
+    num(m.value, x + w - 24, yy, 18, C.ink, 'right', 600);
+  });
+}
+
+/* ---------------- 走行動画 ---------------- */
+const V = { el:null, ready:false, fps:30, frame:0, fit:'contain', audio:true, dur:0 };
+
+// HUD列の反対側の空きスペース
+function videoBox(){
+  if (!ORDER.some(k => UI.w[k])) return { x:0, y:0, w:DW, h:DH };
+  const w = DW - 80 - COLW - 20;
+  const x = (UI.side === 'left') ? (40 + COLW + 20) : 40;
+  return { x, y:40, w, h:DH - 80 };
+}
+// データ時刻 t(ms) に対応する動画の再生位置(秒)
+function videoTimeFor(t){
+  return V.frame / V.fps + Math.max(0, t) / 1000;
+}
+function seekVideo(tSec){
+  return new Promise(res => {
+    if (!V.ready) return res();
+    // フレーム境界ちょうどを避けて半フレーム分だけ内側を狙う（1フレームずれ防止）
+    const t = Math.max(0, Math.min(V.dur - 0.001, tSec + 0.5 / V.fps));
+    if (Math.abs(V.el.currentTime - t) < 0.0005) return res();
+    let done = false;
+    const on = () => { if (done) return; done = true; V.el.removeEventListener('seeked', on); res(); };
+    V.el.addEventListener('seeked', on);
+    setTimeout(on, 2000);
+    try { V.el.currentTime = t; } catch(e){ on(); }
+  });
+}
+function drawVideo(){
+  if (!V.ready || !V.el.videoWidth) return;
+  const b = videoBox(), vw = V.el.videoWidth, vh = V.el.videoHeight;
+  const s = (V.fit === 'cover') ? Math.max(b.w / vw, b.h / vh) : Math.min(b.w / vw, b.h / vh);
+  const dw = vw * s, dh = vh * s;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip();
+  try { ctx.drawImage(V.el, b.x + (b.w - dw) / 2, b.y + (b.h - dh) / 2, dw, dh); } catch(e){}
+  ctx.restore();
+}
+/* --- 動画のfps自動判定 --- */
+const STD_FPS = [24000/1001, 24, 25, 30000/1001, 30, 48, 50, 60000/1001, 60, 90, 100, 120000/1001, 120];
+function snapFps(f){
+  if (!(f > 0) || !isFinite(f)) return null;
+  let best = null, bd = Infinity;
+  for (const s of STD_FPS){ const d = Math.abs(f - s) / s; if (d < bd){ bd = d; best = s; } }
+  return (bd < 0.03) ? best : Math.round(f * 1000) / 1000;
+}
+
+// MP4/MOV: moov→trak(vide)→mdhd/stts を読んで正確なfpsを得る
+async function fpsFromMp4(file){
+  const readBox = async (off) => {                       // 先頭16バイトからサイズと型を取得
+    if (off + 16 > file.size) return null;
+    const h = new DataView(await file.slice(off, off + 16).arrayBuffer());
+    let size = h.getUint32(0);
+    const type = String.fromCharCode(h.getUint8(4), h.getUint8(5), h.getUint8(6), h.getUint8(7));
+    let head = 8;
+    if (size === 1){ size = h.getUint32(8) * 4294967296 + h.getUint32(12); head = 16; }
+    else if (size === 0) size = file.size - off;
+    return { size, type, head };
+  };
+  let off = 0, moov = null;
+  for (let guard = 0; guard < 64 && off < file.size; guard++){
+    const b = await readBox(off);
+    if (!b || b.size < 8) break;
+    if (b.type === 'moov'){
+      if (b.size > 64 * 1024 * 1024) break;
+      moov = new Uint8Array(await file.slice(off + b.head, off + b.size).arrayBuffer());
+      break;
+    }
+    if (b.type !== 'ftyp' && b.type !== 'free' && b.type !== 'skip' && b.type !== 'wide' &&
+        b.type !== 'mdat' && b.type !== 'moof' && b.type !== 'uuid' && b.type !== 'pnot') break;
+    off += b.size;
+  }
+  if (!moov) return null;
+
+  const dv = new DataView(moov.buffer, moov.byteOffset, moov.byteLength);
+  const CONTAINERS = { moov:1, trak:1, mdia:1, minf:1, stbl:1 };
+  let result = null;
+
+  (function walk(start, end, state){
+    let p = start;
+    while (p + 8 <= end){
+      let size = dv.getUint32(p);
+      const type = String.fromCharCode(moov[p+4], moov[p+5], moov[p+6], moov[p+7]);
+      let head = 8;
+      if (size === 1){ size = dv.getUint32(p+8) * 4294967296 + dv.getUint32(p+12); head = 16; }
+      else if (size === 0) size = end - p;
+      if (size < 8 || p + size > end) break;
+      if (type === 'trak') walk(p + head, p + size, {});
+      else if (CONTAINERS[type]) walk(p + head, p + size, state);
+      else if (type === 'hdlr'){
+        state.vide = String.fromCharCode(moov[p+head+8], moov[p+head+9], moov[p+head+10], moov[p+head+11]) === 'vide';
+      }
+      else if (type === 'mdhd'){
+        const ver = moov[p + head];
+        state.timescale = ver === 1 ? dv.getUint32(p + head + 20) : dv.getUint32(p + head + 12);
+      }
+      else if (type === 'stts'){
+        const n = dv.getUint32(p + head + 4);
+        let samples = 0, dur = 0;
+        for (let i = 0; i < n && i < 100000; i++){
+          const c = dv.getUint32(p + head + 8 + i * 8), d = dv.getUint32(p + head + 12 + i * 8);
+          samples += c; dur += c * d;
+        }
+        state.samples = samples; state.dur = dur;
+      }
+      if (state.vide && state.timescale && state.samples > 1 && state.dur > 0 && !result)
+        result = state.samples / (state.dur / state.timescale);
+      p += size;
+    }
+  })(0, moov.length, {});
+
+  return result;
+}
+
+// WebM/MKV: Tracks→TrackEntry の DefaultDuration(ns) から求める
+async function fpsFromWebM(file){
+  const buf = new Uint8Array(await file.slice(0, Math.min(file.size, 8 * 1024 * 1024)).arrayBuffer());
+  let result = null;
+  function vint(p, keepMarker){
+    if (p >= buf.length) return null;
+    const b0 = buf[p];
+    if (b0 === 0) return null;
+    let len = 1, mask = 0x80;
+    while (!(b0 & mask)){ mask >>= 1; len++; if (len > 8) return null; }
+    let v = keepMarker ? b0 : (b0 & (mask - 1));
+    for (let i = 1; i < len; i++) v = v * 256 + buf[p + i];
+    return { v, len };
+  }
+  (function walk(start, end, depth){
+    let p = start;
+    while (p < end && !result && depth < 6){
+      const id = vint(p, true); if (!id) return;
+      const sz = vint(p + id.len, false); if (!sz) return;
+      const cs = p + id.len + sz.len;
+      let ce = cs + sz.v;
+      if (sz.v > end - cs) ce = end;                       // 不明サイズ/切り詰め
+      if (id.v === 0x18538067 || id.v === 0x1654AE6B || id.v === 0xAE || id.v === 0xE0){
+        walk(cs, ce, depth + 1);                           // Segment / Tracks / TrackEntry / Video
+      } else if (id.v === 0x23E383){                       // DefaultDuration (ns)
+        let d = 0; for (let i = cs; i < ce; i++) d = d * 256 + buf[i];
+        if (d > 0) result = 1e9 / d;
+      }
+      if (ce <= p) return;
+      p = ce;
+    }
+  })(0, buf.length, 0);
+  return result;
+}
+
+// どの形式でも使える実測（requestVideoFrameCallback でフレーム間隔を測る）
+function fpsByPlayback(el){
+  return new Promise(res => {
+    if (!el.requestVideoFrameCallback) return res(null);
+    let first = null, last = null, n = 0, finished = false;
+    const wasMuted = el.muted;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      try{ el.pause(); }catch(e){}
+      el.muted = wasMuted; el.currentTime = 0;
+      if (n < 6 || first === null || !(last > first)) return res(null);
+      res((n - 1) / (last - first));       // 全体の平均を取る（1フレームごとの丸め誤差を消す）
+    };
+    const onFrame = (now, meta) => {
+      if (first === null) first = meta.mediaTime;
+      if (meta.mediaTime > last || last === null){ last = meta.mediaTime; n++; }
+      if (n < 60 && !finished) el.requestVideoFrameCallback(onFrame); else finish();
+    };
+    el.muted = true;
+    try{ el.currentTime = 0; }catch(e){}
+    el.play().then(() => el.requestVideoFrameCallback(onFrame)).catch(() => res(null));
+    setTimeout(finish, 4000);
+  });
+}
+
+async function detectFps(file, el){
+  let f = null;
+  if (/\.(mp4|mov|m4v)$/i.test(file.name) || file.type === 'video/mp4' || file.type === 'video/quicktime'){
+    try{ f = await fpsFromMp4(file); }catch(e){}
+  }
+  if (!f && /\.(webm|mkv)$/i.test(file.name) || (!f && /webm|matroska/.test(file.type))){
+    try{ f = await fpsFromWebM(file); }catch(e){}
+  }
+  let measured = false;
+  if (!f){ f = await fpsByPlayback(el); measured = true; }
+  const snapped = snapFps(f);
+  return snapped ? { fps: snapped, measured } : null;
+}
+
+function loadVideo(f){
+  if (V.el){ try{ V.el.pause(); URL.revokeObjectURL(V.el.src); }catch(e){} }
+  const el = document.createElement('video');
+  el.src = URL.createObjectURL(f);
+  el.preload = 'auto'; el.playsInline = true; el.muted = !$('vaudio').checked;
+  el.onloadedmetadata = async () => {
+    V.el = el; V.ready = true; V.dur = el.duration || 0;
+    const base = f.name + ' — ' + el.videoWidth + '×' + el.videoHeight +
+      ' / ' + (el.duration || 0).toFixed(2) + ' 秒';
+    $('vinfo').textContent = base + ' / fps判定中…';
+    $('vclear').disabled = false;
+    $('drop').style.display = D ? 'none' : '';
+    updateFmtHint();
+    await seekVideo(videoTimeFor(cur));
+    render(cur);
+
+    const det = await detectFps(f, el);                      // 動画のfpsを自動反映
+    if (det){
+      const shown = Math.round(det.fps * 1000) / 1000;
+      $('vfps').value = String(shown);
+      $('vinfo').textContent = base + ' / ' + shown + ' fps' + (det.measured ? '（実測・要確認）' : '（自動判定）');
+      addExportFpsOption(shown);
+    } else {
+      $('vinfo').textContent = base + ' / fpsを判定できませんでした。手動で入力してください';
+    }
+    syncUI();
+    await seekVideo(videoTimeFor(cur));
+    render(cur);
+  };
+  el.onerror = () => alert('この動画は読み込めませんでした（ブラウザが対応していない形式かもしれません）。MP4(H.264) / WebM をお試しください。');
+}
+$('vopen').onclick = () => $('vfile').click();
+$('vfile').onchange = e => { if (e.target.files[0]) loadVideo(e.target.files[0]); };
+$('vclear').onclick = () => {
+  if (V.el){ try{ V.el.pause(); URL.revokeObjectURL(V.el.src); }catch(e){} }
+  V.el = null; V.ready = false;
+  $('vinfo').textContent = '動画未読み込み（この枠にドロップしてもOK）';
+  $('vclear').disabled = true;
+  updateFmtHint();
+  render(cur);
+};
+[['vm10',-10],['vm1',-1],['vp1',1],['vp10',10]].forEach(([id, d]) => {
+  $(id).onclick = () => { $('vframe').value = String(Math.round(+$('vframe').value || 0) + d); syncUI(); };
+});
+
+/* ---------------- メイン描画 ---------------- */
+const UI = {
+  maxspeed:60, maxangle:50, maxduty:110, maxsensor:1023, win:5, lock:111, lockhold:true, expfps:30,
+  opacity:0.72, panelbg:true, bg:'alpha', side:'left',
+  w:{ time:true, motor:true, speed:true, servo:true, sensor:true, graph:true, meta:false }
+};
+
+function render(t){
+  const scale = cv.width / DW;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (UI.bg !== 'alpha'){
+    ctx.fillStyle = UI.bg === 'green' ? '#00b140' : UI.bg === 'blue' ? '#0047bb' : '#000000';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+  }
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  drawVideo();
+  if (!D){ ctx.setTransform(1, 0, 0, 1, 0, 0); return; }
+  const tt = Math.max(0, Math.min(D.dur, t));
+  ctx.globalAlpha = (UI.bg === 'alpha') ? UI.opacity : 1;
+  const B = layout();
+  if (B.time)   drawTime(B.time, tt);
+  if (B.motor)  drawMotor(B.motor, tt);
+  if (B.speed)  drawSpeed(B.speed, tt);
+  if (B.servo)  drawServo(B.servo, tt);
+  if (B.sensor) drawSensor(B.sensor, tt);
+  if (B.graph)  drawGraph(B.graph, tt);
+  if (UI.w.meta) drawMeta();
+  ctx.globalAlpha = 1;
+}
+
+/* ---------------- 再生制御 ---------------- */
+const playBtn = $('play'), seek = $('seek'), tlabel = $('tlabel');
+
+// コマ送りの基準fps（動画があれば動画のfps、無ければ書き出しfps）
+function stepFps(){ return V.ready ? V.fps : (+$('fps').value || 30); }
+function stepFrame(d){
+  if (!D) return;
+  pause();
+  const f = stepFps();
+  const n = Math.round(cur / 1000 * f) + d;
+  setTime(n * 1000 / f);
+}
+function refresh(){
+  if (!playing && !busy && V.ready) seekVideo(videoTimeFor(cur)).then(() => render(cur));
+  else render(cur);
+}
+function setTime(t){
+  cur = Math.max(0, Math.min(D ? D.dur : 0, t));
+  if (D) seek.value = String(cur / D.dur * 1000);
+  const f = stepFps();
+  let label = (cur / 1000).toFixed(3) + ' s / ' + ((D ? D.dur : 0) / 1000).toFixed(3) + ' s';
+  label += '　' + Math.round(cur / 1000 * f) + ' / ' + Math.round((D ? D.dur : 0) / 1000 * f) + ' コマ';
+  if (V.ready) label += '　動画 ' + Math.round(videoTimeFor(cur) * V.fps) + ' f';
+  tlabel.textContent = label;
+  refresh();
+}
+function syncVideo(rate){
+  if (!V.ready) return;
+  const tgt = videoTimeFor(cur);
+  if (tgt >= V.dur){ if (!V.el.paused) V.el.pause(); return; }
+  V.el.playbackRate = Math.max(0.0625, Math.min(16, rate));
+  if (V.el.paused) V.el.play().catch(() => {});
+  if (Math.abs(V.el.currentTime - tgt) > 0.08) V.el.currentTime = tgt;
+}
+function loop(ts){
+  if (!playing) return;
+  const dt = lastRAF ? (ts - lastRAF) : 0;
+  lastRAF = ts;
+  const rate = parseFloat($('rate').value);
+  let t = cur + dt * rate;
+  if (t >= D.dur){
+    if ($('loop').checked) t = 0; else { t = D.dur; pause(); }
+  }
+  setTime(t);
+  if (playing) syncVideo(rate);
+  requestAnimationFrame(loop);
+}
+function play(){
+  if (!D || busy) return;
+  playing = true; lastRAF = 0; playBtn.textContent = '⏸ 一時停止';
+  if (V.ready){
+    V.el.muted = !V.audio;
+    V.el.currentTime = Math.min(V.dur - 0.001, videoTimeFor(cur));
+    V.el.play().catch(() => {});
+  }
+  requestAnimationFrame(loop);
+}
+function pause(){
+  playing = false; playBtn.textContent = '▶ 再生';
+  if (V.ready) V.el.pause();
+}
+playBtn.onclick = () => playing ? pause() : play();
+$('rew').onclick = () => { pause(); setTime(0); };
+$('stepb').onclick = () => stepFrame(-1);
+$('stepf').onclick = () => stepFrame(1);
+seek.oninput = () => { if (D) { pause(); setTime(parseFloat(seek.value) / 1000 * D.dur); } };
+
+document.addEventListener('keydown', e => {
+  if (!D || busy || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  if (e.code === 'Space'){ e.preventDefault(); playing ? pause() : play(); }
+  else if (e.code === 'ArrowRight'){ e.preventDefault(); stepFrame(e.shiftKey ? 10 : 1); }
+  else if (e.code === 'ArrowLeft'){ e.preventDefault(); stepFrame(e.shiftKey ? -10 : -1); }
+  else if (e.code === 'Home'){ pause(); setTime(0); }
+  else if (e.code === 'End'){ pause(); setTime(D.dur); }
+});
+
+/* ---------------- 設定 UI ---------------- */
+function syncUI(){
+  UI.maxspeed = Math.max(1, +$('maxspeed').value);
+  UI.maxangle = Math.max(1, +$('maxangle').value);
+  UI.maxduty  = Math.max(1, +$('maxduty').value);
+  UI.win      = Math.max(0, +$('win').value || 0);
+  UI.side     = $('hudside').value;
+  UI.lock     = +$('lock').value;
+  UI.lockhold = $('lockhold').checked;
+  UI.expfps   = +$('fps').value || 30;
+  V.fps       = Math.max(1, +$('vfps').value || 30);
+  V.frame     = Math.round(+$('vframe').value || 0);
+  V.fit       = $('vfit').value;
+  V.audio     = $('vaudio').checked;
+  if (V.el) V.el.muted = !V.audio;
+  UI.opacity  = +$('opacity').value / 100;
+  UI.panelbg  = $('panelbg').checked;
+  UI.bg       = $('bg').value;
+  UI.w.motor  = $('w_motor').checked;
+  UI.w.servo  = $('w_servo').checked;
+  UI.w.speed  = $('w_speed').checked;
+  UI.w.graph  = $('w_graph').checked;
+  UI.w.sensor = $('w_sensor').checked;
+  UI.w.time   = $('w_time').checked;
+  UI.w.meta   = $('w_meta').checked;
+  const st = $('stage');
+  st.className = UI.bg === 'alpha' ? 'checker' : 'dark';
+  setTime(cur);
+}
+['maxspeed','maxangle','maxduty','win','opacity','panelbg','bg','hudside','lock',
+ 'vfps','vframe','vfit','vaudio','lockhold','fps',
+ 'w_motor','w_servo','w_speed','w_graph','w_sensor','w_time','w_meta']
+  .forEach(id => { $(id).addEventListener('input', syncUI); $(id).addEventListener('change', syncUI); });
+
+$('res').addEventListener('change', () => {
+  const w = +$('res').value;
+  cv.width = w; cv.height = Math.round(w * DH / DW);
+  render(cur);
+});
+
+function autoScale(){
+  if (!D) return;
+  const up = (v, s, min) => Math.max(min, Math.ceil(v / s) * s);
+  const sp = colMinMax('speed')[1];
+  const an = Math.max(Math.abs(colMinMax('angle')[0]), Math.abs(colMinMax('angle')[1]));
+  let du = 0;                                       // 電磁ロック値(111)はスケール計算から除外
+  for (const k of ['lf','rf','lr','rr']){
+    const c = D.col[k];
+    for (let i = 0; i < D.n; i++) if (!isLock(c[i])) du = Math.max(du, Math.abs(c[i]));
+  }
+  let se = 0;
+  for (const k of ['s0','s1','s2','s3','s4','slope']) se = Math.max(se, colMinMax(k)[1]);
+  $('maxspeed').value = up(sp, 10, 10);
+  $('maxangle').value = up(an, 10, 10);
+  $('maxduty').value  = up(du, 10, 10);
+  UI.maxsensor = up(se, 50, 100);
+  syncUI();
+}
+$('autoscale').onclick = autoScale;
+
+/* ---------------- ファイル読み込み ---------------- */
+async function loadFile(f){
+  try{
+    const buf = await f.arrayBuffer();
+    D = parseCSV(decodeBytes(buf), f.name);
+    $('fileinfo').textContent = f.name + ' — ' + D.n + ' 行 / ' + (D.dur / 1000).toFixed(2) + ' 秒';
+    $('drop').style.display = 'none';
+    playBtn.disabled = false; seek.disabled = false; $('rew').disabled = false;
+    $('stepb').disabled = false; $('stepf').disabled = false;
+    autoScale();
+    setTime(0);
+  }catch(err){
+    alert('CSVを読めませんでした:\n' + err.message);
+  }
+}
+$('openbtn').onclick = () => $('file').click();
+$('file').onchange = e => { if (e.target.files[0]) loadFile(e.target.files[0]); };
+document.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
+document.addEventListener('dragleave', e => { if (e.relatedTarget === null) document.body.classList.remove('dragging'); });
+document.addEventListener('drop', e => {
+  e.preventDefault(); document.body.classList.remove('dragging');
+  const f = e.dataTransfer.files[0];
+  if (!f) return;
+  if (/^video\//.test(f.type) || /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(f.name)) loadVideo(f);
+  else loadFile(f);
+});
+
+/* ---------------- ZIP (無圧縮 store) ---------------- */
+const CRC_T = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++){
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(u8){
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+class Zip {
+  constructor(){ this.parts = []; this.entries = []; this.off = 0; }
+  add(name, data){
+    const nb = new TextEncoder().encode(name);
+    const crc = crc32(data);
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0, true);
+    h.setUint16(8, 0, true); h.setUint16(10, 0, true); h.setUint16(12, 0x21, true);
+    h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true);
+    h.setUint16(26, nb.length, true); h.setUint16(28, 0, true);
+    this.parts.push(new Uint8Array(h.buffer), nb, data);
+    this.entries.push({ nb, crc, size: data.length, off: this.off });
+    this.off += 30 + nb.length + data.length;
+  }
+  finish(){
+    const cd = [];
+    let cdLen = 0;
+    for (const e of this.entries){
+      const h = new DataView(new ArrayBuffer(46));
+      h.setUint32(0, 0x02014b50, true); h.setUint16(4, 20, true); h.setUint16(6, 20, true);
+      h.setUint16(8, 0, true); h.setUint16(10, 0, true); h.setUint16(12, 0, true); h.setUint16(14, 0x21, true);
+      h.setUint32(16, e.crc, true); h.setUint32(20, e.size, true); h.setUint32(24, e.size, true);
+      h.setUint16(28, e.nb.length, true); h.setUint16(30, 0, true); h.setUint16(32, 0, true);
+      h.setUint16(34, 0, true); h.setUint16(36, 0, true); h.setUint32(38, 0, true);
+      h.setUint32(42, e.off, true);
+      cd.push(new Uint8Array(h.buffer), e.nb);
+      cdLen += 46 + e.nb.length;
+    }
+    const eo = new DataView(new ArrayBuffer(22));
+    eo.setUint32(0, 0x06054b50, true);
+    eo.setUint16(8, this.entries.length, true); eo.setUint16(10, this.entries.length, true);
+    eo.setUint32(12, cdLen, true); eo.setUint32(16, this.off, true);
+    return new Blob([...this.parts, ...cd, new Uint8Array(eo.buffer)], { type:'application/zip' });
+  }
+}
+
+/* ---------------- MP4 直接書き出し（WebCodecs + 自前MP4マルチプレクサ / フレーム精度） ---------------- */
+const MP4_ENC_CODECS = ['avc1.640028','avc1.4d0028','avc1.42001f','vp09.00.10.08'];
+
+function encCfg(codec, w, h, fps, bitrate){
+  const c = { codec, width:w, height:h, bitrate, framerate:fps, latencyMode:'quality' };
+  if (codec.indexOf('avc1') === 0) c.avc = { format:'avc' };
+  return c;
+}
+async function pickEncoderCodec(w, h, fps, bitrate){
+  if (!window.VideoEncoder) return null;
+  for (const codec of MP4_ENC_CODECS){
+    try{
+      const r = await VideoEncoder.isConfigSupported(encCfg(codec, w, h, fps, bitrate));
+      if (r && r.supported) return codec;
+    }catch(e){}
+  }
+  return null;
+}
+
+/* --- 最小限のMP4ライタ --- */
+const _4cc = s => new Uint8Array([s.charCodeAt(0), s.charCodeAt(1), s.charCodeAt(2), s.charCodeAt(3)]);
+const _u8 = (...n) => new Uint8Array(n);
+function _u16(v){ const a = new Uint8Array(2); new DataView(a.buffer).setUint16(0, v); return a; }
+function _u32(v){ const a = new Uint8Array(4); new DataView(a.buffer).setUint32(0, v >>> 0); return a; }
+function _u64(v){ const a = new Uint8Array(8); const d = new DataView(a.buffer);
+  d.setUint32(0, Math.floor(v / 4294967296)); d.setUint32(4, v >>> 0); return a; }
+function _cat(list){ let n = 0; for (const a of list) n += a.length;
+  const o = new Uint8Array(n); let p = 0; for (const a of list){ o.set(a, p); p += a.length; } return o; }
+function _box(type, ...parts){ const b = _cat(parts); return _cat([_u32(b.length + 8), _4cc(type), b]); }
+function _fbox(type, ver, flags, ...parts){
+  return _box(type, _u8(ver), _u8((flags >> 16) & 255, (flags >> 8) & 255, flags & 255), ...parts);
+}
+const _MATRIX = _cat([_u32(0x00010000), _u32(0), _u32(0), _u32(0), _u32(0x00010000), _u32(0), _u32(0), _u32(0), _u32(0x40000000)]);
+
+function _visualSampleEntry(codec, w, h, description){
+  const common = _cat([
+    _u8(0,0,0,0,0,0), _u16(1),                      // reserved + data_reference_index
+    _u16(0), _u16(0), _u32(0), _u32(0), _u32(0),    // pre_defined / reserved
+    _u16(w), _u16(h),
+    _u32(0x00480000), _u32(0x00480000),             // 72dpi
+    _u32(0), _u16(1),
+    new Uint8Array(32),                             // compressorname
+    _u16(0x0018), _u16(0xFFFF)
+  ]);
+  if (codec.indexOf('avc1') === 0){
+    return _box('avc1', common, _box('avcC', description));
+  }
+  // vp09: codec文字列から vpcC を組み立てる（vp09.PP.LL.DD）
+  const parts = codec.split('.');
+  const profile = parseInt(parts[1] || '0', 10), level = parseInt(parts[2] || '10', 10), depth = parseInt(parts[3] || '8', 10);
+  const vpcC = _fbox('vpcC', 1, 0, _u8(profile, level, (depth << 4) | (1 << 1) | 0, 1, 1, 1), _u16(0));
+  return _box('vp09', common, vpcC);
+}
+
+// samples: [{data:Uint8Array, key:boolean}]
+function buildMP4(samples, opt){
+  const n = samples.length;
+  const mediaTs = opt.fps * 1000, delta = 1000;
+  const movieTs = 1000;
+  const durMovie = Math.round(n / opt.fps * 1000);
+  const durMedia = n * delta;
+
+  const ftyp = _box('ftyp', _4cc('isom'), _u32(512), _4cc('isom'), _4cc('iso2'), _4cc('avc1'), _4cc('mp41'));
+  let mdatSize = 0;
+  for (const s of samples) mdatSize += s.data.length;
+  const mdatHeader = _cat([_u32(1), _4cc('mdat'), _u64(mdatSize + 16)]);   // 64bit size
+  const firstOffset = ftyp.length + mdatHeader.length;
+
+  const keys = [];
+  const sizes = [];
+  samples.forEach((s, i) => { sizes.push(s.data.length); if (s.key) keys.push(i + 1); });
+
+  const stsd = _fbox('stsd', 0, 0, _u32(1), _visualSampleEntry(opt.codec, opt.width, opt.height, opt.description));
+  const stts = _fbox('stts', 0, 0, _u32(1), _u32(n), _u32(delta));
+  const stsc = _fbox('stsc', 0, 0, _u32(1), _u32(1), _u32(n), _u32(1));
+  const stsz = _fbox('stsz', 0, 0, _u32(0), _u32(n), _cat(sizes.map(_u32)));
+  const co64 = _fbox('co64', 0, 0, _u32(1), _u64(firstOffset));
+  const stss = (keys.length && keys.length < n) ? _fbox('stss', 0, 0, _u32(keys.length), _cat(keys.map(_u32))) : null;
+  const stblParts = [stsd, stts, stsc, stsz, co64];
+  if (stss) stblParts.splice(2, 0, stss);
+  const stbl = _box('stbl', ...stblParts);
+
+  const dinf = _box('dinf', _fbox('dref', 0, 0, _u32(1), _fbox('url ', 0, 1)));
+  const minf = _box('minf', _fbox('vmhd', 0, 1, _u16(0), _u16(0), _u16(0), _u16(0)), dinf, stbl);
+  const hdlr = _fbox('hdlr', 0, 0, _u32(0), _4cc('vide'), _u32(0), _u32(0), _u32(0),
+                     new Uint8Array([86,105,100,101,111,72,97,110,100,108,101,114,0]));  // "VideoHandler"
+  const mdhd = _fbox('mdhd', 0, 0, _u32(0), _u32(0), _u32(mediaTs), _u32(durMedia), _u16(0x55C4), _u16(0));
+  const mdia = _box('mdia', mdhd, hdlr, minf);
+  const tkhd = _fbox('tkhd', 0, 3, _u32(0), _u32(0), _u32(1), _u32(0), _u32(durMovie),
+                     _u32(0), _u32(0), _u16(0), _u16(0), _u16(0), _u16(0), _MATRIX,
+                     _u32(opt.width * 65536), _u32(opt.height * 65536));
+  const trak = _box('trak', tkhd, mdia);
+  const mvhd = _fbox('mvhd', 0, 0, _u32(0), _u32(0), _u32(movieTs), _u32(durMovie),
+                     _u32(0x00010000), _u16(0x0100), _u16(0), _u32(0), _u32(0), _MATRIX,
+                     _u32(0), _u32(0), _u32(0), _u32(0), _u32(0), _u32(0), _u32(2));
+  const moov = _box('moov', mvhd, trak);
+
+  return new Blob([ftyp, mdatHeader, ...samples.map(s => s.data), moov], { type:'video/mp4' });
+}
+
+// 書き出しfpsの候補に動画のfpsを追加する
+function addExportFpsOption(v){
+  const sel = $('fps');
+  for (const o of sel.options) if (Math.abs(+o.value - v) < 0.001) return;
+  const o = document.createElement('option');
+  o.value = String(v); o.textContent = v + '（動画に合わせる）';
+  sel.appendChild(o);
+  if (v <= 31) sel.value = String(v);
+}
+
+/* --- フレーム精度でMP4を書き出す --- */
+async function exportMP4Exact(){
+  if (!D || busy) return;
+  pause();
+  const fps = +$('fps').value;
+  const w = cv.width, h = cv.height;
+  const mbps = Math.max(1, +$('mbps').value || 16);
+  const bitrate = Math.round(mbps * 1e6 * (w * h * fps) / (1920 * 1080 * 30));
+  const codec = await pickEncoderCodec(w, h, fps, bitrate);
+  if (!codec){
+    alert('このブラウザはMP4のフレーム精度書き出し（WebCodecs）に対応していません。\n\n形式を「MP4（等倍録画）」にするか、PNG連番ZIP＋ffmpegをご利用ください。');
+    return;
+  }
+  const savedBg = UI.bg;
+  if (UI.bg === 'alpha') UI.bg = 'black';           // MP4は透過不可
+  setBusy(true, '準備中…');
+
+  const total = Math.floor(D.dur / 1000 * fps) + 1;
+  const samples = [];
+  let description = null, encErr = null;
+  const enc = new VideoEncoder({
+    output: (chunk, meta) => {
+      if (meta && meta.decoderConfig && meta.decoderConfig.description && !description)
+        description = new Uint8Array(meta.decoderConfig.description);
+      const buf = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(buf);
+      samples.push({ data: buf, key: chunk.type === 'key' });
+    },
+    error: e => { encErr = e; }
+  });
+  enc.configure(encCfg(codec, w, h, fps, bitrate));
+
+  try{
+    for (let i = 0; i < total; i++){
+      if (aborting || encErr) break;
+      const ms = i / fps * 1000;
+      if (V.ready) await seekVideo(videoTimeFor(ms));   // 1フレームずつ動画も合わせる
+      render(ms);
+      const frame = new VideoFrame(cv, {
+        timestamp: Math.round(i * 1e6 / fps),
+        duration: Math.round(1e6 / fps)
+      });
+      enc.encode(frame, { keyFrame: i % fps === 0 });
+      frame.close();
+      while (enc.encodeQueueSize > 6 && !encErr) await new Promise(r => setTimeout(r, 4));
+      if (i % 3 === 0 || i === total - 1){
+        prog((i + 1) / total, 'エンコード ' + (i + 1) + ' / ' + total + ' フレーム');
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+    await enc.flush();
+    enc.close();
+    if (encErr) throw encErr;
+    if (codec.indexOf('avc1') === 0 && !description) throw new Error('H.264のヘッダ情報を取得できませんでした');
+    if (!aborting){
+      if (codec.indexOf('avc1') !== 0)
+        alert('このブラウザはH.264エンコードに対応していないため、VP9で書き出します（拡張子はmp4のまま）。\n再生はできますが、編集ソフトによっては読み込めない場合があります。');
+      prog(1, 'MP4を書き出し中…');
+      await new Promise(r => setTimeout(r, 30));
+      dl(buildMP4(samples, { fps, width:w, height:h, codec, description }), baseName() + '_HUD.mp4');
+    }
+  }catch(err){
+    alert('MP4の書き出しに失敗しました: ' + (err && err.message ? err.message : err));
+  }
+  UI.bg = savedBg;
+  setBusy(false);
+  setTime(cur);
+}
+
+/* ---------------- 書き出し ---------------- */
+function dl(blob, name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 20000);
+}
+function setBusy(b, label){
+  busy = b; aborting = false;
+  $('run').disabled = b; $('shot').disabled = b;
+  $('cancel').disabled = !b;
+  $('prog').style.display = b ? 'flex' : 'none';
+  if (label) $('progtext').textContent = label;
+  if (!b) $('progbar').firstElementChild.style.width = '0%';
+}
+$('cancel').onclick = () => { aborting = true; };
+function prog(f, txt){
+  $('progbar').firstElementChild.style.width = (f * 100).toFixed(1) + '%';
+  $('progtext').textContent = txt;
+}
+const baseName = () => (D && D.name ? D.name.replace(/\.[^.]+$/, '') : 'hud');
+
+$('shot').onclick = () => {
+  if (!D) return;
+  render(cur);
+  cv.toBlob(b => dl(b, baseName() + '_' + Math.round(cur) + 'ms.png'), 'image/png');
+};
+
+/* 対応コーデックの判定 */
+// 明示的にH.264を指定できる場合のみMP4録画を許可する
+// （コーデック名なしの 'video/mp4' は true を返しても実際には録れないブラウザがある）
+const MP4_TYPES = ['video/mp4;codecs=avc1.640028','video/mp4;codecs=avc1.42E01E','video/mp4;codecs=avc1'];
+const MP4_TYPES_AV = ['video/mp4;codecs=avc1.640028,mp4a.40.2','video/mp4;codecs=avc1.42E01E,mp4a.40.2'];
+const WEBM_TYPES = ['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+const WEBM_TYPES_AV = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus'];
+const pickMime = list => (window.MediaRecorder ? list.find(t => MediaRecorder.isTypeSupported(t)) : null);
+const mp4OK = () => !!pickMime(MP4_TYPES);
+
+function updateFmtHint(){
+  const f = $('fmt').value;
+  const el = $('fmthint');
+  if (f === 'mp4x'){
+    el.innerHTML = '<b>1フレームずつ描画してエンコードする方式</b>です。再生の重さに影響されないので、走行動画とHUDのズレが出ません。透過は不可（背景は黒などになります）。音声は入りません。';
+  } else if (f === 'png'){
+    el.innerHTML = '<b>透過つきで確実に書き出せる方法</b>です。フレーム精度で1枚ずつ描画するので取りこぼしがありません。編集ソフトに「画像シーケンス」として読み込むか、下のffmpegコマンドでMP4／透過MOVに変換してください。';
+  } else if (f === 'mp4'){
+    el.innerHTML = '等倍再生しながら収録する方式。音声も入れられますが、PCが重いとタイミングが数フレームずれることがあります。<br>' + (mp4OK()
+      ? 'MP4(H.264)は<b>透過を保持できません</b>。合成するなら背景を「グリーンバック」にしてクロマキー、または透過が必要ならPNG連番を使ってください。等倍再生しながらの録画です。'
+      : '<b>このブラウザはMP4録画に非対応です。</b>Chrome/Edgeの新しめのバージョンか、Safariでお試しください。それ以外はPNG連番で書き出し→下のffmpegコマンドでMP4化するのが確実です。');
+  } else {
+    el.innerHTML = 'WebM(VP9/VP8)の録画です。等倍再生しながら収録します。透過の可否はブラウザ依存のため、確実に透過したいときはPNG連番を使ってください。';
+  }
+}
+$('fmt').addEventListener('change', updateFmtHint);
+updateFmtHint();
+
+function buildFF(){
+  const el = $('ffcmd'), fps = +$('fps').value;
+  el.textContent =
+`# PNG連番ZIPを展開したフォルダで実行
+
+# ① MP4 (H.264・背景つき / 一番つぶしが効く)
+ffmpeg -framerate ${fps} -i frame_%05d.png \\
+  -c:v libx264 -pix_fmt yuv420p -crf 18 out.mp4
+
+# ② 透過つきMOV (ProRes 4444) ※編集ソフトでそのまま重ねられる
+ffmpeg -framerate ${fps} -i frame_%05d.png \\
+  -c:v prores_ks -profile:v 4444 -pix_fmt yuva444p10le out.mov
+
+# ③ 透過つきWebM (VP9) ※-auto-alt-ref 0 が無いと透過が消えます
+ffmpeg -framerate ${fps} -i frame_%05d.png \\
+  -c:v libvpx-vp9 -pix_fmt yuva420p -auto-alt-ref 0 -b:v 8M out.webm
+
+# ④ 走行動画に直接重ねてMP4にする（透過PNG連番を合成）
+ffmpeg -i drive.mp4 -framerate ${fps} -i frame_%05d.png \\
+  -filter_complex "[0][1]overlay=0:0:shortest=0" \\
+  -c:v libx264 -pix_fmt yuv420p -crf 18 composited.mp4`;
+}
+$('ffbtn').onclick = () => {
+  const el = $('ffcmd');
+  el.hidden = !el.hidden;
+  if (!el.hidden) buildFF();
+  $('ffbtn').textContent = el.hidden ? 'ffmpegコマンドを表示' : 'ffmpegコマンドを隠す';
+};
+$('fps').addEventListener('change', () => { if (!$('ffcmd').hidden) buildFF(); });
+
+$('run').onclick = () => {
+  const f = $('fmt').value;
+  if (f === 'mp4x') exportMP4Exact();
+  else if (f === 'png') exportPNG();
+  else exportRecord(f);
+};
+
+async function exportPNG(){
+  if (!D || busy) return;
+  pause();
+  const fps = +$('fps').value;
+  const total = Math.floor(D.dur / 1000 * fps) + 1;
+  if (total > 1200 && !confirm(total + ' 枚のPNGを書き出します。メモリを大量に使い時間もかかります。続けますか？')) return;
+  setBusy(true, '準備中…');
+  const zip = new Zip();
+  try{
+    for (let i = 0; i < total; i++){
+      if (aborting) break;
+      const ms = i / fps * 1000;
+      if (V.ready) await seekVideo(videoTimeFor(ms));   // 動画もフレーム単位で合わせる
+      render(ms);
+      const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
+      zip.add('frame_' + String(i).padStart(5, '0') + '.png', new Uint8Array(await blob.arrayBuffer()));
+      if (i % 3 === 0 || i === total - 1){
+        prog((i + 1) / total, 'PNG書き出し ' + (i + 1) + ' / ' + total);
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+    if (!aborting){
+      prog(1, 'ZIP作成中…');
+      await new Promise(r => setTimeout(r, 30));
+      dl(zip.finish(), baseName() + '_HUD_' + fps + 'fps_png.zip');
+    }
+  }catch(err){
+    alert('書き出しに失敗しました: ' + err.message);
+  }
+  setBusy(false);
+  setTime(cur);
+}
+
+async function exportRecord(kind){
+  if (!D || busy) return;
+  pause();
+  const fps = +$('fps').value;
+  if (!pickMime(kind === 'mp4' ? MP4_TYPES : WEBM_TYPES)){
+    alert(kind === 'mp4'
+      ? 'このブラウザはMP4録画に対応していません。\n\nPNG連番ZIPで書き出したあと、「ffmpegコマンドを表示」の①をお使いください（画質・フレーム精度ともにそちらが上です）。'
+      : 'このブラウザはWebM録画に対応していません。PNG連番をご利用ください。');
+    return;
+  }
+  let forceBlack = false;
+  if (kind === 'mp4' && UI.bg === 'alpha'){
+    if (!confirm('MP4は透過を保持できません。背景「黒」で書き出します。\n\nクロマキー合成するなら「キャンセル」→背景を「グリーンバック」に変更してください。\n透過が必要な場合はPNG連番をお使いください。')) return;
+    forceBlack = true;
+  }
+  const savedBg = UI.bg;
+  if (forceBlack) UI.bg = 'black';
+  setBusy(true, '録画中…');
+
+  let r = await recordPass(kind, fps, V.ready && V.audio);
+  if (!r.ok && !aborting && r.hadAudio){          // 音声付きで失敗したら映像のみで録り直す
+    prog(0, '音声を含められませんでした。映像のみで録り直します…');
+    await new Promise(res => setTimeout(res, 300));
+    r = await recordPass(kind, fps, false);
+  }
+  const ext = kind === 'mp4' ? 'mp4' : 'webm';
+  if (!aborting){
+    if (!r.ok) alert('録画データが空でした。このブラウザでは ' + ext.toUpperCase() + ' 録画が実際には動作しないようです。\n\nPNG連番ZIPで書き出し、「ffmpegコマンドを表示」の①でMP4に変換してください。');
+    else dl(new Blob(r.chunks, { type: r.mime.split(';')[0] }), baseName() + '_HUD.' + ext);
+  }
+  UI.bg = savedBg;
+  setBusy(false);
+  setTime(cur);
+}
+
+// 等倍再生しながら1回録画する
+async function recordPass(kind, fps, useAudio){
+  const stream = cv.captureStream(fps);
+  let hadAudio = false;
+  if (useAudio){
+    try{
+      const cap = V.el.captureStream || V.el.mozCaptureStream;
+      const at = cap.call(V.el).getAudioTracks();
+      if (at.length){ stream.addTrack(at[0]); hadAudio = true; }
+    }catch(e){}
+  }
+  const av = stream.getAudioTracks().length > 0;
+  const mime = pickMime(kind === 'mp4'
+    ? (av ? MP4_TYPES_AV.concat(MP4_TYPES) : MP4_TYPES)
+    : (av ? WEBM_TYPES_AV.concat(WEBM_TYPES) : WEBM_TYPES));
+  if (V.ready){
+    V.el.muted = !V.audio;
+    V.el.playbackRate = 1;
+    await seekVideo(videoTimeFor(0));
+    try{ await V.el.play(); }catch(e){}
+  }
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 16000000 });
+  const chunks = [];
+  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  const done = new Promise(r => rec.onstop = r);
+  rec.start(500);
+  const t0 = performance.now();
+  let dead = false;
+  await new Promise(resolve => {
+    function step(){
+      const el = performance.now() - t0;
+      if (aborting || el >= D.dur){ resolve(); return; }
+      if (el > 2500 && chunks.length === 0 && hadAudio){ dead = true; resolve(); return; }
+      if (V.ready){
+        const tgt = videoTimeFor(el);
+        if (tgt < V.dur && Math.abs(V.el.currentTime - tgt) > 0.1) V.el.currentTime = tgt;
+      }
+      render(el);
+      prog(el / D.dur, '録画中 ' + (el / 1000).toFixed(1) + ' / ' + (D.dur / 1000).toFixed(1) + ' 秒（等倍再生' + (av ? '・音声あり' : '') + '）');
+      requestAnimationFrame(step);
+    }
+    step();
+  });
+  if (!dead){ render(D.dur); await new Promise(r => setTimeout(r, 400)); }
+  if (V.ready) V.el.pause();
+  rec.stop();
+  await done;
+  stream.getTracks().forEach(t => t.stop());
+  const total = chunks.reduce((s, c) => s + c.size, 0);
+  return { ok: !dead && total > 0, chunks, mime, hadAudio };
+}
+
+syncUI();
+render(0);
+</script>
+</body>
+</html>

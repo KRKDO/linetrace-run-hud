@@ -1,0 +1,17 @@
+{
+  "name": "linetrace-run-hud",
+  "version": "1.0.0",
+  "description": "マイコンカーの走行ログ(CSV)から、走行動画に重ねるHUD映像を作るブラウザツール",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "build": "node tools/build.mjs",
+    "check": "node tools/build.mjs --check"
+  },
+  "keywords": ["micomcar", "micom-car-rally", "telemetry", "hud", "overlay", "webcodecs"],
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "dependencies": {},
+  "devDependencies": {}
+}
