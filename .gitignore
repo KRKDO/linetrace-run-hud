@@ -1,0 +1,19 @@
+# Node.js の依存ファイル（絶対にアップロードしない）
+node_modules/
+
+# ビルド結果
+dist/
+
+# OS が勝手に作るファイル
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# エディタ
+.vscode/
+.idea/
+
+# 書き出した映像・作業ファイル（リポジトリに入れない）
+*.mp4
+*.webm
+*.zip
